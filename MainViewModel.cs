@@ -17,6 +17,7 @@ namespace BFMESaveFileEditor
         private EntryViewModel? _selectedEntry;
 
         private readonly ObservableCollection<EntryPropertyViewModel> _selectedEntryProperties;
+        private readonly ObservableCollection<EntryViewModel> _visibleChunkEntries;
 
         public ObservableCollection<ChunkViewModel> Chunks { get; }
 
@@ -28,6 +29,7 @@ namespace BFMESaveFileEditor
         {
             Chunks = [];
             _selectedEntryProperties = [];
+            _visibleChunkEntries = [];
 
             _status = "Ready";
 
@@ -44,6 +46,8 @@ namespace BFMESaveFileEditor
                 if (!ReferenceEquals(_selectedChunk, value))
                 {
                     _selectedChunk = value;
+                    RebuildVisibleChunkEntries();
+                    OnPropertyChanged(nameof(SelectedChunkEntries));
                     OnPropertyChanged();
                     OnPropertyChanged(nameof(SelectedChunkEntries));
 
@@ -126,6 +130,38 @@ namespace BFMESaveFileEditor
             }
 
             return false;
+        }
+
+        private void RebuildVisibleChunkEntries()
+        {
+            _visibleChunkEntries.Clear();
+
+            if (_selectedChunk == null)
+            {
+                return;
+            }
+
+            bool isHeroesChunk = string.Equals(_selectedChunk.Model.Name, "CHUNK_CampaignKOLBH", StringComparison.OrdinalIgnoreCase);
+
+            if (!isHeroesChunk)
+            {
+                for (int i = 0; i < _selectedChunk.Entries.Count; i++)
+                {
+                    _visibleChunkEntries.Add(_selectedChunk.Entries[i]);
+                }
+
+                return;
+            }
+
+            // Heroes chunk: show only hero-owner entries
+            for (int i = 0; i < _selectedChunk.Entries.Count; i++)
+            {
+                EntryViewModel e = _selectedChunk.Entries[i];
+                if (string.Equals(e.Label, "Hero", StringComparison.OrdinalIgnoreCase))
+                {
+                    _visibleChunkEntries.Add(e);
+                }
+            }
         }
 
 
@@ -228,15 +264,9 @@ namespace BFMESaveFileEditor
                     }
 
                     Entry model = prop.Source.Model;
-                    SaveGamePatcher.PatchAsciiZ(
-                        _file.Raw,
-                        model.Offset,
-                        model.Size,
-                        prop.DisplayValue);
+                    SaveGamePatcher.PatchAscii(_file.Raw, model.Offset, model.Size, prop.DisplayValue);
 
                     model.DisplayValue = prop.DisplayValue;
-                    model.RawHexPreview =
-                        BinaryUtil.HexPreview(_file.Raw, model.Offset, Math.Min(32, model.Size));
 
                     prop.Source.OnRefresh();
                 }
@@ -273,6 +303,32 @@ namespace BFMESaveFileEditor
                 return result;
             }
 
+            bool isHeroesChunk = string.Equals(_selectedChunk.Model.Name, "CHUNK_CampaignKOLBH", StringComparison.OrdinalIgnoreCase);
+
+            if (isHeroesChunk)
+            {
+                // Only show upgrades that belong to the selected hero.
+                if (!string.Equals(_selectedEntry.Label, "Hero", StringComparison.OrdinalIgnoreCase))
+                {
+                    return result;
+                }
+
+                string heroName = _selectedEntry.DisplayValue;
+
+                for (int i = 0; i < _selectedChunk.Entries.Count; i++)
+                {
+                    EntryViewModel e = _selectedChunk.Entries[i];
+
+                    if (string.Equals(e.Model.Owner, heroName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        result.Add(e);
+                    }
+                }
+
+                return result;
+            }
+
+            // Default behavior for other chunks: show "all siblings except selected"
             for (int i = 0; i < _selectedChunk.Entries.Count; i++)
             {
                 EntryViewModel e = _selectedChunk.Entries[i];
@@ -290,10 +346,7 @@ namespace BFMESaveFileEditor
 
         public ObservableCollection<EntryViewModel> SelectedChunkEntries
         {
-            get
-            {
-                return _selectedChunk != null ? _selectedChunk.Entries : [];
-            }
+            get { return _visibleChunkEntries; }
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;

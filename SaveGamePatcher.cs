@@ -4,32 +4,23 @@ namespace BFMESaveFileEditor
 {
     class SaveGamePatcher
     {
-        public static void PatchAsciiZ(byte[] raw, int offset, int allocatedSize, string newValue)
+        public static void PatchAscii(byte[] raw, int offset, int allocatedSize, string? newValue)
         {
             ArgumentNullException.ThrowIfNull(raw);
+
             newValue ??= "";
 
             byte[] bytes = Encoding.ASCII.GetBytes(newValue);
 
-            // allocatedSize beinhaltet terminierenden Nullbyte Platz (Entry.Size)
-            int maxPayload = Math.Max(0, allocatedSize - 1);
-
-            if (bytes.Length > maxPayload)
+            if (bytes.Length > allocatedSize)
             {
-                throw new InvalidOperationException("New string is too long. Max length: " + maxPayload + " chars.");
+                throw new InvalidOperationException($"New string is too long. Max length: {allocatedSize} bytes.");
             }
 
-            // clear
-            for (int i = 0; i < allocatedSize; i++)
-            {
-                raw[offset + i] = 0;
-            }
+            Span<byte> target = raw.AsSpan(offset, allocatedSize);
 
-            // write
-            for (int i = 0; i < bytes.Length; i++)
-            {
-                raw[offset + i] = bytes[i];
-            }
+            target.Clear();
+            bytes.CopyTo(target);
         }
     }
 }

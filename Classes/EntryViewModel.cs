@@ -40,23 +40,9 @@ namespace BFMESaveFileEditor.Classes
             }
         }
 
-        public string RawHexPreview
-        {
-            get { return Model.RawHexPreview; }
-            set
-            {
-                if (Model.RawHexPreview != value)
-                {
-                    Model.RawHexPreview = value;
-                    OnPropertyChanged();
-                }
-            }
-        }
-
         public void OnRefresh()
         {
             OnPropertyChanged(nameof(DisplayValue));
-            OnPropertyChanged(nameof(RawHexPreview));
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;

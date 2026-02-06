@@ -25,32 +25,30 @@ namespace BFMESaveFileEditor
 
         public Chunk()
         {
-            this.Name = "";
-            this.Entries = [];
+            Name = "";
+            Entries = [];
         }
 
         public override string ToString()
         {
-            return this.Name + " @0x" + this.Offset.ToString("X") + " (" + this.Length + " bytes)";
+            return Name + " @0x" + Offset.ToString("X") + " (" + Length + " bytes)";
         }
     }
 
     public sealed class Entry
     {
         public EntryType Type { get; set; }
-        public string Label { get; set; }           // optional, z.B. "MapPath"
+        public string Label { get; set; }           // optional, e.g. "MapPath"
         public int Offset { get; set; }             // absolute offset in file
         public int Size { get; set; }               // bytes
-        public string DisplayValue { get; set; }    // editierbar im UI
-        public string RawHexPreview { get; set; }   // quick debug
+        public string DisplayValue { get; set; }    // editable in UI
         public string? Owner { get; set; }
         public int OwnerIndex { get; set; }
 
         public Entry()
         {
-            this.Label = "";
-            this.DisplayValue = "";
-            this.RawHexPreview = "";
+            Label = "";
+            DisplayValue = "";
         }
     }
 
@@ -101,20 +99,6 @@ namespace BFMESaveFileEditor
                 if (ok) return i;
             }
             return -1;
-        }
-
-        public static string HexPreview(byte[] data, int offset, int count)
-        {
-            int len = Math.Min(count, data.Length - offset);
-            if (len <= 0) return "";
-
-            StringBuilder sb = new(len * 3);
-            for (int i = 0; i < len; i++)
-            {
-                if (i > 0) sb.Append(' ');
-                sb.Append(data[offset + i].ToString("X2"));
-            }
-            return sb.ToString();
         }
     }
 }

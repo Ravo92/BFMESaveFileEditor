@@ -129,7 +129,6 @@
                                 Offset = i,
                                 Size = size,
                                 DisplayValue = s,
-                                RawHexPreview = BinaryUtil.HexPreview(raw, i, Math.Min(32, size)),
                                 Owner = null,
                                 OwnerIndex = -1
                             };
@@ -149,7 +148,6 @@
                             Offset = i,
                             Size = size,
                             DisplayValue = s,
-                            RawHexPreview = BinaryUtil.HexPreview(raw, i, Math.Min(32, size)),
                             Owner = isProperty ? currentOwner : null,
                             OwnerIndex = isProperty ? currentOwnerIndex : -1
                         };
@@ -200,7 +198,6 @@
                                     Offset = i,
                                     Size = size,
                                     DisplayValue = s,
-                                    RawHexPreview = BinaryUtil.HexPreview(raw, i, Math.Min(32, size)),
                                     Owner = null,
                                     OwnerIndex = -1
                                 };
@@ -220,7 +217,6 @@
                                 Offset = i,
                                 Size = size,
                                 DisplayValue = s,
-                                RawHexPreview = BinaryUtil.HexPreview(raw, i, Math.Min(32, size)),
                                 Owner = isProperty ? currentOwner : null,
                                 OwnerIndex = isProperty ? currentOwnerIndex : -1
                             };
@@ -275,7 +271,6 @@
                             Offset = e.Offset,
                             Size = e.Size,
                             DisplayValue = e.DisplayValue,
-                            RawHexPreview = e.RawHexPreview,
                             Owner = null,
                             OwnerIndex = -1
                         };
