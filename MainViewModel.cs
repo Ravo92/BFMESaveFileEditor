@@ -141,7 +141,7 @@ namespace BFMESaveFileEditor
                 return;
             }
 
-            bool isHeroesChunk = string.Equals(_selectedChunk.Model.Name, "CHUNK_CampaignKOLBH", StringComparison.OrdinalIgnoreCase);
+            bool isHeroesChunk = IsCampaignHeroesChunk(_selectedChunk.Model.Name);
 
             if (!isHeroesChunk)
             {
@@ -153,7 +153,7 @@ namespace BFMESaveFileEditor
                 return;
             }
 
-            // Heroes chunk: show only hero-owner entries
+            // Heroes-Chunk: links nur Owner/Hero-Root-Einträge anzeigen
             for (int i = 0; i < _selectedChunk.Entries.Count; i++)
             {
                 EntryViewModel e = _selectedChunk.Entries[i];
@@ -162,6 +162,17 @@ namespace BFMESaveFileEditor
                     _visibleChunkEntries.Add(e);
                 }
             }
+        }
+
+        private static bool IsCampaignHeroesChunk(string chunkName)
+        {
+            if (string.IsNullOrWhiteSpace(chunkName))
+            {
+                return false;
+            }
+
+            // Es existieren mehrere Varianten wie ...KOLBH / ...KOLBO / etc.
+            return chunkName.StartsWith("CHUNK_CampaignKOLB", StringComparison.OrdinalIgnoreCase);
         }
 
 
@@ -303,11 +314,11 @@ namespace BFMESaveFileEditor
                 return result;
             }
 
-            bool isHeroesChunk = string.Equals(_selectedChunk.Model.Name, "CHUNK_CampaignKOLBH", StringComparison.OrdinalIgnoreCase);
+            bool isHeroesChunk = IsCampaignHeroesChunk(_selectedChunk.Model.Name);
 
             if (isHeroesChunk)
             {
-                // Only show upgrades that belong to the selected hero.
+                // Rechts nur Upgrades/Properties, die dem selektierten Hero gehören
                 if (!string.Equals(_selectedEntry.Label, "Hero", StringComparison.OrdinalIgnoreCase))
                 {
                     return result;
@@ -328,7 +339,7 @@ namespace BFMESaveFileEditor
                 return result;
             }
 
-            // Default behavior for other chunks: show "all siblings except selected"
+            // Default: alles außer selected
             for (int i = 0; i < _selectedChunk.Entries.Count; i++)
             {
                 EntryViewModel e = _selectedChunk.Entries[i];

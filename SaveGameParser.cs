@@ -69,6 +69,58 @@
             return new SaveGameFile(raw, chunks);
         }
 
+        private static string SanitizeExtractedToken(string s)
+        {
+            if (string.IsNullOrEmpty(s))
+            {
+                return s;
+            }
+
+            string trimmed = s.Trim();
+
+            if (IsChunkToken(trimmed))
+            {
+                // Keep only [A-Za-z0-9_] after CHUNK_ style tokens.
+                // This removes trailing junk such as "'", "|", etc.
+                System.Text.StringBuilder builder = new(trimmed.Length);
+                for (int i = 0; i < trimmed.Length; i++)
+                {
+                    char c = trimmed[i];
+                    if (char.IsLetterOrDigit(c) || c == '_')
+                    {
+                        builder.Append(c);
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+
+                string cleaned = builder.ToString();
+                cleaned = NormalizeKolbSuffix(cleaned);
+                return cleaned;
+            }
+
+            // Map/path tokens: remove leading commas that come from delimiters in the binary stream.
+            if (trimmed.StartsWith(",maps\\", StringComparison.OrdinalIgnoreCase) ||
+                trimmed.StartsWith(",maps/", StringComparison.OrdinalIgnoreCase))
+            {
+                return trimmed.TrimStart(',', ' ');
+            }
+
+            return trimmed;
+        }
+
+        private static bool IsChunkToken(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s))
+            {
+                return false;
+            }
+
+            return s.StartsWith("CHUNK_", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static List<Entry> ExtractEntries(byte[] raw, int start, int end)
         {
             List<Entry> entries = [];
@@ -80,7 +132,7 @@
 
             while (i < end)
             {
-                if (i + 1 < end && raw[i] >= 32 && raw[i] <= 126 && raw[i + 1] == 0x00)
+                if (((i & 1) == 0) && i + 3 < end && raw[i] >= 32 && raw[i] <= 126 && raw[i + 1] == 0x00)
                 {
                     int j = i;
                     int charCount = 0;
@@ -95,9 +147,16 @@
 
                         charCount++;
                         j += 2;
+
+                        if (charCount > 512)
+                        {
+                            break;
+                        }
                     }
 
-                    if (charCount >= 4)
+                    bool hasTerminator = (j + 1 < end && raw[j] == 0x00 && raw[j + 1] == 0x00);
+
+                    if (charCount >= 4 && hasTerminator)
                     {
                         System.Text.StringBuilder stringBuilder = new(charCount);
                         int k = i;
@@ -109,7 +168,15 @@
                         }
 
                         string s = stringBuilder.ToString();
-                        int size = charCount * 2;
+                        s = SanitizeExtractedToken(s);
+
+                        if (!IsValidAsciiRun(s))
+                        {
+                            i++;
+                            continue;
+                        }
+
+                        int size = (charCount * 2) + 2;
 
                         if (string.Equals(s, "SG_EOF", StringComparison.OrdinalIgnoreCase))
                         {
@@ -173,6 +240,7 @@
                     if (len >= 4)
                     {
                         string s = System.Text.Encoding.ASCII.GetString(raw, i, len);
+                        s = SanitizeExtractedToken(s);
 
                         if (IsValidAsciiRun(s))
                         {
@@ -185,7 +253,6 @@
                                 continue;
                             }
 
-                            // Hero-Owner?
                             if (IsHeroOwner(s))
                             {
                                 currentOwner = s;
@@ -293,7 +360,10 @@
 
         private static string NormalizeChunkName(string dataset)
         {
-            if (string.IsNullOrEmpty(dataset)) return string.Empty;
+            if (string.IsNullOrEmpty(dataset))
+            {
+                return string.Empty;
+            }
 
             dataset = dataset.Trim();
 
@@ -312,7 +382,40 @@
                 }
             }
 
-            return stringBuilder.ToString();
+            string name = stringBuilder.ToString();
+
+            // If the chunk id has a 1-character suffix after KOLB (e.g. KOLBE / KOLBO),
+            // remove it to keep a stable chunk key for mapping and display.
+            name = NormalizeKolbSuffix(name);
+
+            return name;
+        }
+
+        private static string NormalizeKolbSuffix(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s))
+            {
+                return s;
+            }
+
+            int idx = s.LastIndexOf("KOLB", StringComparison.OrdinalIgnoreCase);
+            if (idx < 0)
+            {
+                return s;
+            }
+
+            // Only trim if KOLB is at the end minus exactly one extra character.
+            // Example: "...KOLBE" -> "...KOLB"
+            if (idx + 4 == s.Length - 1)
+            {
+                char suffix = s[s.Length - 1];
+                if (char.IsLetter(suffix))
+                {
+                    return s.Substring(0, s.Length - 1);
+                }
+            }
+
+            return s;
         }
 
 
@@ -321,6 +424,21 @@
             if (string.IsNullOrWhiteSpace(s)) return false;
             if (s.Length < 4) return false;
             if (s.Length > 512) return false;
+
+            // Chunk-like tokens must be strict: only [A-Za-z0-9_]
+            if (IsChunkToken(s))
+            {
+                for (int i = 0; i < s.Length; i++)
+                {
+                    char c = s[i];
+                    if (!(char.IsLetterOrDigit(c) || c == '_'))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
 
             int weird = 0;
             for (int i = 0; i < s.Length; i++)
