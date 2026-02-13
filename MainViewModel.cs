@@ -126,17 +126,8 @@ namespace BFMESaveFileEditor
                 return false;
             }
 
-            if (string.Equals(chunkName, "GLOBAL_SCIENCES", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            if (string.Equals(chunkName, "CHUNK_GameStateKOLB", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            return false;
+            // Only show properties for campaign heroes
+            return !chunkName.StartsWith("CHUNK_CampaignKOLB", StringComparison.OrdinalIgnoreCase);
         }
 
         private void RebuildVisibleChunkEntries()
@@ -273,16 +264,20 @@ namespace BFMESaveFileEditor
 
             try
             {
-                // First: insert new upgrades so offsets become stable
+                // First pass: insert new upgrades so their offsets become valid before patching anything else.
                 for (int i = 0; i < _selectedEntryProperties.Count; i++)
                 {
                     EntryPropertyViewModel prop = _selectedEntryProperties[i];
+
                     if (!prop.IsNew)
                     {
                         continue;
                     }
 
-                    Entry model = prop.Source.Model;
+                    if (string.IsNullOrWhiteSpace(prop.DisplayValue))
+                    {
+                        continue;
+                    }
 
                     if (_selectedChunk == null || _selectedEntry == null)
                     {
@@ -302,15 +297,20 @@ namespace BFMESaveFileEditor
                     int insertOffset = GetInsertionOffsetForHero(_selectedChunk.Model, _selectedEntry.DisplayValue);
 
                     int writtenOffset = SaveGamePatcher.InsertAsciiZ(ref _file, insertOffset, prop.DisplayValue);
+
+                    Entry model = prop.Source.Model;
                     model.Offset = writtenOffset;
                     model.Size = prop.DisplayValue.Length + 1;
                     model.DisplayValue = prop.DisplayValue;
+
+                    prop.Source.OnRefresh();
                 }
 
-                // Second: patch existing strings in-place
+                // Second pass: patch existing values in-place.
                 for (int i = 0; i < _selectedEntryProperties.Count; i++)
                 {
                     EntryPropertyViewModel prop = _selectedEntryProperties[i];
+
                     if (prop.IsNew)
                     {
                         continue;
@@ -322,9 +322,23 @@ namespace BFMESaveFileEditor
                     }
 
                     Entry model = prop.Source.Model;
-                    SaveGamePatcher.PatchAscii(_file.Raw, model.Offset, model.Size, prop.DisplayValue);
 
-                    model.DisplayValue = prop.DisplayValue;
+                    if (model.Type == EntryType.UInt32)
+                    {
+                        if (!uint.TryParse(prop.DisplayValue, out uint newU32))
+                        {
+                            throw new InvalidOperationException("Invalid UInt32 value: " + prop.DisplayValue);
+                        }
+
+                        SaveGamePatcher.PatchUInt32(_file.Raw, model.Offset, newU32);
+                        model.DisplayValue = newU32.ToString();
+                    }
+                    else
+                    {
+                        SaveGamePatcher.PatchAscii(_file.Raw, model.Offset, model.Size, prop.DisplayValue);
+                        model.DisplayValue = prop.DisplayValue;
+                    }
+
                     prop.Source.OnRefresh();
                 }
 
@@ -399,42 +413,28 @@ namespace BFMESaveFileEditor
                 return result;
             }
 
-            bool isHeroesChunk = IsCampaignHeroesChunk(_selectedChunk.Model.Name);
-
-            if (isHeroesChunk)
+            if (!IsCampaignHeroesChunk(_selectedChunk.Model.Name))
             {
-                // Rechts nur Upgrades/Properties, die dem selektierten Hero gehören
-                if (!string.Equals(_selectedEntry.Label, "Hero", StringComparison.OrdinalIgnoreCase))
-                {
-                    return result;
-                }
-
-                string heroName = _selectedEntry.DisplayValue;
-
-                for (int i = 0; i < _selectedChunk.Entries.Count; i++)
-                {
-                    EntryViewModel e = _selectedChunk.Entries[i];
-
-                    if (string.Equals(e.Model.Owner, heroName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        result.Add(e);
-                    }
-                }
-
+                // Only the heroes chunk exposes properties/upgrades on the right side.
                 return result;
             }
 
-            // Default: alles außer selected
+            // Only show upgrades that belong to the selected hero.
+            if (!string.Equals(_selectedEntry.Label, "Hero", StringComparison.OrdinalIgnoreCase))
+            {
+                return result;
+            }
+
+            string heroName = _selectedEntry.DisplayValue;
+
             for (int i = 0; i < _selectedChunk.Entries.Count; i++)
             {
                 EntryViewModel e = _selectedChunk.Entries[i];
 
-                if (ReferenceEquals(e, _selectedEntry))
+                if (string.Equals(e.Model.Owner, heroName, StringComparison.OrdinalIgnoreCase))
                 {
-                    continue;
+                    result.Add(e);
                 }
-
-                result.Add(e);
             }
 
             return result;

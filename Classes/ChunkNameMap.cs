@@ -4,13 +4,13 @@
     {
         internal static readonly Dictionary<string, string> ChunkNameDictionary = new(StringComparer.OrdinalIgnoreCase)
             {
-                { "CHUNK_LivingWorldLogicKOLB", "World / Map State" },
-                { "CHUNK_GameStateMapKOLB",    "World / Map State (Details)" },
+                { "CHUNK_LivingWorldLogicKOLB", "World Logic" },
+                { "CHUNK_GameStateMapKOLB",    "Map State" },
 
                 { "CHUNK_GameStateKOLB",        "Game State" },
                 { "CHUNK_GameLogicKOLB",        "Game Logic" },
 
-                { "CHUNK_CampaignKOLB",        "Campaign / Heroes" },
+                { "CHUNK_CampaignKOLB",        "Heroes" },
 
                 { "CHUNK_AudioKOLB",            "Audio State" },
 

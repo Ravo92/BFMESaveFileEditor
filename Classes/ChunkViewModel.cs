@@ -15,15 +15,13 @@ namespace BFMESaveFileEditor.Classes
                 string name = Model.Name;
 
                 string title;
-                if (ChunkNameMap.ChunkNameDictionary.TryGetValue(name, out string? friendlyName) &&
-                    !string.IsNullOrWhiteSpace(friendlyName))
+                if (!ChunkNameMap.ChunkNameDictionary.TryGetValue(name, out string? friendlyName) ||
+                    string.IsNullOrWhiteSpace(friendlyName))
                 {
-                    title = friendlyName;
+                    friendlyName = name;
                 }
-                else
-                {
-                    title = name;
-                }
+
+                title = friendlyName;
 
                 return title + " (" + Model.Entries.Count + " entries)";
             }

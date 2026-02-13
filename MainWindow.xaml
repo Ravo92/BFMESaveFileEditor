@@ -47,7 +47,7 @@
                       CanUserReorderColumns="False"
                       SelectionUnit="FullRow">
                     <DataGrid.Columns>
-                        <DataGridTextColumn Header="Hero" Binding="{Binding DisplayValue}" Width="*"/>
+                        <DataGridTextColumn Header="Name" Binding="{Binding DisplayValue}" Width="*"/>
                         <DataGridTextColumn Header="Offset" Binding="{Binding Offset}" Width="90"/>
                     </DataGrid.Columns>
                 </DataGrid>

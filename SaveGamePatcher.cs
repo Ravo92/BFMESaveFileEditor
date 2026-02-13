@@ -82,5 +82,20 @@ namespace BFMESaveFileEditor
                 }
             }
         }
+
+        public static void PatchUInt32(byte[] raw, int offset, uint newValue)
+        {
+            ArgumentNullException.ThrowIfNull(raw);
+
+            if (offset < 0 || offset + 4 > raw.Length)
+            {
+                throw new InvalidOperationException("Offset out of range for UInt32 patch.");
+            }
+
+            raw[offset + 0] = (byte)(newValue & 0xFF);
+            raw[offset + 1] = (byte)((newValue >> 8) & 0xFF);
+            raw[offset + 2] = (byte)((newValue >> 16) & 0xFF);
+            raw[offset + 3] = (byte)((newValue >> 24) & 0xFF);
+        }
     }
 }

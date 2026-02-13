@@ -7,6 +7,9 @@ namespace BFMESaveFileEditor
         StringAsciiZ,
         UInt32,
         Int32,
+        UInt16,
+        Byte,
+        Float32,
         Unknown
     }
 
