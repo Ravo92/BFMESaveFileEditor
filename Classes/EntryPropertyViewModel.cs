@@ -2,7 +2,7 @@
 
 namespace BFMESaveFileEditor.Classes
 {
-    public sealed class EntryPropertyViewModel(string label, string originalValue, EntryViewModel source) : INotifyPropertyChanged
+    public sealed class EntryPropertyViewModel(string label, string originalValue, EntryViewModel source, bool isNew) : INotifyPropertyChanged
     {
         private string _displayValue = originalValue;
         private bool _isModified = false;
@@ -10,6 +10,7 @@ namespace BFMESaveFileEditor.Classes
         public string Label { get; } = label;
         public string OriginalValue { get; } = originalValue;
         public EntryViewModel Source { get; } = source;
+        public bool IsNew { get; } = isNew;
 
         public string DisplayValue
         {

@@ -24,6 +24,7 @@ namespace BFMESaveFileEditor
         public ICommand OpenCommand { get; }
         public ICommand SaveAsCommand { get; }
         public ICommand ApplyEditCommand { get; }
+        public ICommand AddUpgradeCommand { get; }
 
         public MainViewModel()
         {
@@ -36,6 +37,7 @@ namespace BFMESaveFileEditor
             OpenCommand = new RelayCommand(OpenFile);
             SaveAsCommand = new RelayCommand(SaveAsFile, CanSave);
             ApplyEditCommand = new RelayCommand(ApplyEdit, CanApplyEdit);
+            AddUpgradeCommand = new RelayCommand(AddUpgrade, CanAddUpgrade);
         }
 
         public ChunkViewModel? SelectedChunk
@@ -78,6 +80,11 @@ namespace BFMESaveFileEditor
             get { return _selectedEntryProperties; }
         }
 
+        public static string[] AvailableUpgrades
+        {
+            get { return UpgradeCatalog.ObjectLevelUpgrades; }
+        }
+
         private void RebuildRightProperties()
         {
             foreach (EntryPropertyViewModel prop in _selectedEntryProperties)
@@ -103,7 +110,7 @@ namespace BFMESaveFileEditor
             for (int i = 0; i < sourceProps.Count; i++)
             {
                 EntryViewModel entry = sourceProps[i];
-                EntryPropertyViewModel vm = new(entry.Label, entry.DisplayValue, entry);
+                EntryPropertyViewModel vm = new(entry.Label, entry.DisplayValue, entry, false);
 
                 vm.PropertyChanged += EntryProperty_PropertyChanged;
                 _selectedEntryProperties.Add(vm);
@@ -171,7 +178,6 @@ namespace BFMESaveFileEditor
                 return false;
             }
 
-            // Es existieren mehrere Varianten wie ...KOLBH / ...KOLBO / etc.
             return chunkName.StartsWith("CHUNK_CampaignKOLB", StringComparison.OrdinalIgnoreCase);
         }
 
@@ -248,7 +254,8 @@ namespace BFMESaveFileEditor
 
             for (int i = 0; i < _selectedEntryProperties.Count; i++)
             {
-                if (_selectedEntryProperties[i].IsModified)
+                EntryPropertyViewModel p = _selectedEntryProperties[i];
+                if (p.IsNew || p.IsModified)
                 {
                     return true;
                 }
@@ -266,9 +273,49 @@ namespace BFMESaveFileEditor
 
             try
             {
+                // First: insert new upgrades so offsets become stable
                 for (int i = 0; i < _selectedEntryProperties.Count; i++)
                 {
                     EntryPropertyViewModel prop = _selectedEntryProperties[i];
+                    if (!prop.IsNew)
+                    {
+                        continue;
+                    }
+
+                    Entry model = prop.Source.Model;
+
+                    if (_selectedChunk == null || _selectedEntry == null)
+                    {
+                        continue;
+                    }
+
+                    if (!IsCampaignHeroesChunk(_selectedChunk.Model.Name))
+                    {
+                        continue;
+                    }
+
+                    if (!string.Equals(_selectedEntry.Label, "Hero", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    int insertOffset = GetInsertionOffsetForHero(_selectedChunk.Model, _selectedEntry.DisplayValue);
+
+                    int writtenOffset = SaveGamePatcher.InsertAsciiZ(ref _file, insertOffset, prop.DisplayValue);
+                    model.Offset = writtenOffset;
+                    model.Size = prop.DisplayValue.Length + 1;
+                    model.DisplayValue = prop.DisplayValue;
+                }
+
+                // Second: patch existing strings in-place
+                for (int i = 0; i < _selectedEntryProperties.Count; i++)
+                {
+                    EntryPropertyViewModel prop = _selectedEntryProperties[i];
+                    if (prop.IsNew)
+                    {
+                        continue;
+                    }
+
                     if (!prop.IsModified)
                     {
                         continue;
@@ -278,18 +325,56 @@ namespace BFMESaveFileEditor
                     SaveGamePatcher.PatchAscii(_file.Raw, model.Offset, model.Size, prop.DisplayValue);
 
                     model.DisplayValue = prop.DisplayValue;
-
                     prop.Source.OnRefresh();
                 }
 
                 RebuildRightProperties();
-
                 Status = "Changes applied.";
             }
             catch (Exception ex)
             {
                 Status = "Patch failed: " + ex.Message;
             }
+        }
+
+        private static int GetInsertionOffsetForHero(Chunk chunk, string heroName)
+        {
+            // Insert after the last entry belonging to the hero.
+            // If no upgrades exist yet, insert right after the hero token itself.
+
+            int bestEnd = -1;
+
+            for (int i = 0; i < chunk.Entries.Count; i++)
+            {
+                Entry e = chunk.Entries[i];
+
+                if (string.Equals(e.Label, "Hero", StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(e.DisplayValue, heroName, StringComparison.OrdinalIgnoreCase))
+                {
+                    int end = e.Offset + Math.Max(e.Size, 0);
+                    if (end > bestEnd)
+                    {
+                        bestEnd = end;
+                    }
+                }
+
+                if (string.Equals(e.Owner, heroName, StringComparison.OrdinalIgnoreCase))
+                {
+                    int end = e.Offset + Math.Max(e.Size, 0);
+                    if (end > bestEnd)
+                    {
+                        bestEnd = end;
+                    }
+                }
+            }
+
+            if (bestEnd < 0)
+            {
+                // Fallback: insert at chunk start if nothing matches (should not happen)
+                return chunk.Offset;
+            }
+
+            return bestEnd;
         }
 
         public string Status
@@ -365,6 +450,64 @@ namespace BFMESaveFileEditor
         private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+
+        private bool CanAddUpgrade()
+        {
+            if (_file == null || _selectedChunk == null || _selectedEntry == null)
+            {
+                return false;
+            }
+
+            if (!IsCampaignHeroesChunk(_selectedChunk.Model.Name))
+            {
+                return false;
+            }
+
+            return string.Equals(_selectedEntry.Label, "Hero", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void AddUpgrade()
+        {
+            if (_file == null || _selectedChunk == null || _selectedEntry == null)
+            {
+                return;
+            }
+
+            if (!IsCampaignHeroesChunk(_selectedChunk.Model.Name))
+            {
+                return;
+            }
+
+            if (!string.Equals(_selectedEntry.Label, "Hero", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            string heroName = _selectedEntry.DisplayValue;
+
+            Entry newModel = new()
+            {
+                Type = EntryType.StringAsciiZ,
+                Label = "Upgrade",
+                Offset = -1,              // -1 indicates "not written to file yet"
+                Size = 0,                 // will be set after insertion
+                DisplayValue = "",        // start empty
+                Owner = heroName,
+                OwnerIndex = _selectedEntry.Model.OwnerIndex
+            };
+
+            EntryViewModel newVm = new(newModel);
+
+            _selectedChunk.Model.Entries.Add(newModel);
+            _selectedChunk.Entries.Add(newVm);
+
+            // OriginalValue empty + DisplayValue empty
+            EntryPropertyViewModel prop = new(newVm.Label, "", newVm, true);
+            prop.PropertyChanged += EntryProperty_PropertyChanged;
+            _selectedEntryProperties.Add(prop);
+
+            RelayCommand.RaiseCanExecuteChanged();
         }
     }
 }

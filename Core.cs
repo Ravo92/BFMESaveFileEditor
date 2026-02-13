@@ -12,8 +12,8 @@ namespace BFMESaveFileEditor
 
     public sealed class SaveGameFile(byte[] raw, List<Chunk> chunks)
     {
-        public byte[] Raw { get; private set; } = raw;
-        public List<Chunk> Chunks { get; private set; } = chunks;
+        public byte[] Raw { get; internal set; } = raw;
+        public List<Chunk> Chunks { get; internal set; } = chunks;
     }
 
     public sealed class Chunk

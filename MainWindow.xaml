@@ -7,13 +7,20 @@
     <DockPanel>
 
         <ToolBar DockPanel.Dock="Top">
-            <Button Content="Open" Command="{Binding OpenCommand}" />
-            <Button Content="Save As" Command="{Binding SaveAsCommand}" Margin="8,0,0,0" />
+            <Button Content="Open" Command="{Binding OpenCommand}"  Margin="8,0,8,0" />
             <Separator/>
-            <Button Content="Apply Edit" Command="{Binding ApplyEditCommand}" />
+            <Button Content="Save As" Command="{Binding SaveAsCommand}" Margin="8,0,8,0" />
             <Separator/>
-            <TextBlock Text="{Binding Status}" Margin="8,0,0,0" />
+            <Button Content="Apply Edit" Command="{Binding ApplyEditCommand}"  Margin="8,0,8,0" />
         </ToolBar>
+
+        <Border DockPanel.Dock="Bottom"
+        BorderThickness="1,1,1,0"
+        BorderBrush="#DDDDDD"
+        Padding="8,4"
+        Background="#F5F5F5">
+            <TextBlock Text="{Binding Status}" VerticalAlignment="Center" />
+        </Border>
 
         <Grid>
             <Grid.ColumnDefinitions>
@@ -48,18 +55,80 @@
 
             <!-- Details / editor -->
             <GroupBox Header="Properties / Upgrades" Grid.Column="2" Grid.Row="0" Margin="8">
-                <DataGrid ItemsSource="{Binding SelectedEntryProperties}"
-                          AutoGenerateColumns="False"
-                          IsReadOnly="False"
-                          CanUserAddRows="False"
-                          CanUserDeleteRows="False">
-                    <DataGrid.Columns>
-                        <DataGridTextColumn Header="Type" Binding="{Binding Label}" Width="100" IsReadOnly="True"/>
-                        <DataGridTextColumn Header="Value" Binding="{Binding DisplayValue, UpdateSourceTrigger=PropertyChanged}" Width="*" IsReadOnly="False"/>
-                    </DataGrid.Columns>
-                </DataGrid>
-            </GroupBox>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
 
+                    <!-- Action row -->
+                    <DockPanel Grid.Row="0" Margin="0,0,0,6">
+                        <Button Content="+"
+                    Command="{Binding AddUpgradeCommand}"
+                    Width="28"
+                    Height="24"
+                    HorizontalAlignment="Right"
+                    DockPanel.Dock="Right" />
+                    </DockPanel>
+
+                    <!-- DataGrid -->
+                    <DataGrid Grid.Row="1"
+                  ItemsSource="{Binding SelectedEntryProperties}"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="False"
+                  CanUserAddRows="False"
+                  CanUserDeleteRows="False">
+                        <DataGrid.Columns>
+
+                            <DataGridTextColumn Header="Type" Binding="{Binding Label}" Width="100" IsReadOnly="True"/>
+
+                            <DataGridTemplateColumn Header="Value" Width="*">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding DisplayValue}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+
+                                <DataGridTemplateColumn.CellEditingTemplate>
+                                    <DataTemplate>
+                                        <ContentControl>
+                                            <ContentControl.Style>
+                                                <Style TargetType="ContentControl">
+
+                                                    <Setter Property="ContentTemplate">
+                                                        <Setter.Value>
+                                                            <DataTemplate>
+                                                                <TextBox Text="{Binding DisplayValue, UpdateSourceTrigger=PropertyChanged}" />
+                                                            </DataTemplate>
+                                                        </Setter.Value>
+                                                    </Setter>
+
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Label}" Value="Upgrade">
+                                                            <Setter Property="ContentTemplate">
+                                                                <Setter.Value>
+                                                                    <DataTemplate>
+                                                                        <ComboBox ItemsSource="{Binding DataContext.AvailableUpgrades, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                      SelectedValuePath="."
+                                                                      SelectedValue="{Binding DisplayValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                      IsEditable="False" />
+                                                                    </DataTemplate>
+                                                                </Setter.Value>
+                                                            </Setter>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+
+                                                </Style>
+                                            </ContentControl.Style>
+                                        </ContentControl>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellEditingTemplate>
+                            </DataGridTemplateColumn>
+
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </GroupBox>
         </Grid>
     </DockPanel>
 </Window>
