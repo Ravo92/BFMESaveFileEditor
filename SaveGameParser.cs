@@ -17,46 +17,41 @@
                 // Parsing continues anyway because some variants may differ.
             }
 
-            List<int> chunkOffsets = [];
-            int cursor = 0;
-
-            while (true)
-            {
-                int idx = BinaryUtil.FindAscii(raw, "CHUNK_", cursor);
-                if (idx < 0)
-                {
-                    break;
-                }
-
-                chunkOffsets.Add(idx);
-                cursor = idx + 6;
-            }
+            List<int> chunkStarts = CollectValidatedChunkStarts(raw);
 
             List<Chunk> chunks = [];
 
-            for (int i = 0; i < chunkOffsets.Count; i++)
+            for (int i = 0; i < chunkStarts.Count; i++)
             {
-                int start = chunkOffsets[i];
-                int end = (i + 1 < chunkOffsets.Count) ? chunkOffsets[i + 1] : raw.Length;
-                int length = end - start;
+                int start = chunkStarts[i];
+                int nextStart = (i + 1 < chunkStarts.Count) ? chunkStarts[i + 1] : raw.Length;
 
-                string chunkName = BinaryUtil.ReadAsciiZ(raw, start, 128);
-                chunkName = NormalizeChunkName(chunkName);
+                int nameLen = GetChunkTokenLength(raw, start, raw.Length, 256);
+                string rawChunkName = nameLen > 0 ? System.Text.Encoding.ASCII.GetString(raw, start, nameLen) : "";
+                string chunkName = NormalizeChunkName(rawChunkName);
+
 
                 if (string.IsNullOrWhiteSpace(chunkName))
                 {
                     chunkName = "CHUNK_?@0x" + start.ToString("X");
                 }
 
+                int end = FindChunkEnd(raw, start, nextStart);
+
+                if (end <= start)
+                {
+                    end = nextStart;
+                }
+
+                int length = end - start;
+
                 List<Entry> extractedEntries;
                 if (IsBinaryPayloadChunk(chunkName))
                 {
-                    // These chunks contain structured binary payload between the chunk name and SG_EOF.
                     extractedEntries = ExtractBinaryPayloadEntries(raw, start, end);
                 }
                 else
                 {
-                    // Default behavior: heuristically extract strings across the chunk region.
                     extractedEntries = ExtractEntries(raw, start, end);
                 }
 
@@ -548,26 +543,38 @@
             payloadStart = 0;
             payloadEnd = 0;
 
-            // Find the real end of the chunk name in the raw data (null-terminated ASCII).
-            if (!TryGetNullTerminatedAsciiRange(raw, chunkStart, chunkEnd, 256, out int nameStart, out int nameEndExclusive))
+            int nameLen = GetChunkTokenLength(raw, chunkStart, chunkEnd, 256);
+            if (nameLen <= 0)
             {
                 return false;
             }
 
-            int afterName = nameEndExclusive + 1; // skip '\0'
+            int afterName = chunkStart + nameLen;
             if (afterName >= chunkEnd)
             {
                 return false;
             }
 
-            int eof = BinaryUtil.FindAscii(raw, "SG_EOF", afterName);
-            if (eof < 0 || eof > chunkEnd)
+            int asciiEof = FindAsciiInRange(raw, "SG_EOF", afterName, chunkEnd);
+            int utf16Eof = FindUtf16LeAsciiInRange(raw, "SG_EOF", afterName, chunkEnd);
+
+            int eof;
+            if (asciiEof >= 0 && utf16Eof >= 0)
             {
-                return false;
+                eof = Math.Min(asciiEof, utf16Eof);
+            }
+            else if (asciiEof >= 0)
+            {
+                eof = asciiEof;
+            }
+            else
+            {
+                eof = utf16Eof;
             }
 
             payloadStart = afterName;
-            payloadEnd = eof;
+            payloadEnd = (eof >= 0) ? eof : chunkEnd;
+
             return payloadStart < payloadEnd;
         }
 
@@ -580,189 +587,478 @@
                 return entries;
             }
 
-            int indexU32 = 0;
-            int indexU16 = 0;
-            int indexByte = 0;
-            int indexF32 = 0;
-            int indexStr = 0;
-
+            int index = 0;
             int i = payloadStart;
 
             while (i < payloadEnd)
             {
-                // 1) ASCII-Z strings (common inside payloads)
-                if (raw[i] >= 32 && raw[i] <= 126)
+                if (TryReadLenPrefixedUtf16Le(raw, i, payloadEnd, out string utf16Text, out int utf16Size))
                 {
-                    int j = i;
-                    while (j < payloadEnd && raw[j] >= 32 && raw[j] <= 126)
-                    {
-                        j++;
-                    }
-
-                    int len = j - i;
-                    bool isZ = (j < payloadEnd && raw[j] == 0x00);
-
-                    if (len >= 4 && isZ)
-                    {
-                        string s = System.Text.Encoding.ASCII.GetString(raw, i, len);
-
-                        if (IsValidAsciiRun(s))
-                        {
-                            Entry e = new()
-                            {
-                                Type = EntryType.StringAsciiZ,
-                                Label = "String_" + indexStr.ToString(),
-                                Offset = i,
-                                Size = len + 1,
-                                DisplayValue = s
-                            };
-
-                            entries.Add(e);
-
-                            indexStr++;
-                            i += (len + 1);
-                            continue;
-                        }
-                    }
-                }
-
-                // 2) Float32 heuristic: if value is finite and not an extreme magnitude
-                if (i + 4 <= payloadEnd)
-                {
-                    float f = BitConverter.ToSingle(raw, i);
-                    if (!float.IsNaN(f) && !float.IsInfinity(f))
-                    {
-                        float af = Math.Abs(f);
-                        if (af > 0.000001f && af < 1000000.0f)
-                        {
-                            Entry e = new()
-                            {
-                                Type = EntryType.Float32,
-                                Label = "F32_" + indexF32.ToString(),
-                                Offset = i,
-                                Size = 4,
-                                DisplayValue = f.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                            };
-
-                            entries.Add(e);
-
-                            indexF32++;
-                            i += 4;
-                            continue;
-                        }
-                    }
-                }
-
-                // 3) UInt16 heuristic: if the upper 16 bits of the next dword are zero, a UInt16 is often more meaningful
-                if (i + 4 <= payloadEnd && raw[i + 2] == 0x00 && raw[i + 3] == 0x00)
-                {
-                    ushort u16 = (ushort)(raw[i] | (raw[i + 1] << 8));
-
                     Entry e = new()
                     {
-                        Type = EntryType.UInt16,
-                        Label = "U16_" + indexU16.ToString(),
+                        Type = EntryType.StringUtf16LeLen8,
+                        Label = "StrU16_" + index.ToString(),
                         Offset = i,
-                        Size = 2,
-                        DisplayValue = "0x" + u16.ToString("X4") + " (" + u16.ToString() + ")"
+                        Size = utf16Size,
+                        DisplayValue = utf16Text
                     };
 
                     entries.Add(e);
-
-                    indexU16++;
-                    i += 2;
+                    index++;
+                    i += utf16Size;
                     continue;
                 }
 
-                // 4) UInt32 default
+                if (TryReadLenPrefixedAscii(raw, i, payloadEnd, out string asciiText, out int asciiSize))
+                {
+                    Entry e = new()
+                    {
+                        Type = EntryType.StringAsciiLen8,
+                        Label = "StrA_" + index.ToString(),
+                        Offset = i,
+                        Size = asciiSize,
+                        DisplayValue = asciiText
+                    };
+
+                    entries.Add(e);
+                    index++;
+                    i += asciiSize;
+                    continue;
+                }
+
+                if (TryReadAsciiZ(raw, i, payloadEnd, out string zText, out int zSize))
+                {
+                    Entry e = new()
+                    {
+                        Type = EntryType.StringAsciiZ,
+                        Label = "StrZ_" + index.ToString(),
+                        Offset = i,
+                        Size = zSize,
+                        DisplayValue = zText
+                    };
+
+                    entries.Add(e);
+                    index++;
+                    i += zSize;
+                    continue;
+                }
+
                 if (i + 4 <= payloadEnd)
                 {
-                    uint u32 = (uint)(raw[i] | (raw[i + 1] << 8) | (raw[i + 2] << 16) | (raw[i + 3] << 24));
+                    uint u32 = ReadU32LE(raw, i);
+                    int i32 = unchecked((int)u32);
+                    float f32 = BitConverter.ToSingle(raw, i);
 
-                    string text;
-                    if (u32 == 0)
-                    {
-                        text = "false (0x00000000)";
-                    }
-                    else if (u32 == 1)
-                    {
-                        text = "true (0x00000001)";
-                    }
-                    else
-                    {
-                        text = "0x" + u32.ToString("X8") + " (" + u32.ToString() + ")";
-                    }
+                    string display = FormatDword(u32, i32, f32);
 
                     Entry e = new()
                     {
                         Type = EntryType.UInt32,
-                        Label = "U32_" + indexU32.ToString(),
+                        Label = "Dword_" + index.ToString(),
                         Offset = i,
                         Size = 4,
-                        DisplayValue = text
+                        DisplayValue = display
                     };
 
                     entries.Add(e);
-
-                    indexU32++;
+                    index++;
                     i += 4;
                     continue;
                 }
 
-                // 5) Trailing bytes
                 byte b = raw[i];
 
                 Entry eb = new()
                 {
                     Type = EntryType.Byte,
-                    Label = "B_" + indexByte.ToString(),
+                    Label = "Byte_" + index.ToString(),
                     Offset = i,
                     Size = 1,
                     DisplayValue = "0x" + b.ToString("X2") + " (" + b.ToString() + ")"
                 };
 
                 entries.Add(eb);
-
-                indexByte++;
-                i++;
+                index++;
+                i += 1;
             }
 
             return entries;
         }
 
-        private static bool TryGetNullTerminatedAsciiRange(byte[] raw, int start, int end, int maxScanBytes, out int stringStart, out int stringEndExclusive)
+        private static List<int> CollectValidatedChunkStarts(byte[] raw)
         {
-            stringStart = 0;
-            stringEndExclusive = 0;
+            List<int> starts = [];
+            int cursor = 0;
 
-            if (start < 0 || start >= end || start >= raw.Length)
+            while (true)
+            {
+                int idx = BinaryUtil.FindAscii(raw, "CHUNK_", cursor);
+                if (idx < 0)
+                {
+                    break;
+                }
+
+                int nameLen = GetChunkTokenLength(raw, idx, raw.Length, 128);
+                if (nameLen >= 10)
+                {
+                    string name = System.Text.Encoding.ASCII.GetString(raw, idx, nameLen);
+
+                    if (name.StartsWith("CHUNK_", StringComparison.OrdinalIgnoreCase) &&
+                        name.Contains("KOLB", StringComparison.OrdinalIgnoreCase))
+                    {
+                        starts.Add(idx);
+                        cursor = idx + 6;
+                        continue;
+                    }
+                }
+
+                cursor = idx + 1;
+            }
+
+            starts.Sort();
+
+            for (int i = starts.Count - 1; i > 0; i--)
+            {
+                if (starts[i] == starts[i - 1])
+                {
+                    starts.RemoveAt(i);
+                }
+            }
+
+            return starts;
+        }
+
+        private static bool IsPlausibleChunkName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
             {
                 return false;
             }
 
-            int limit = Math.Min(end, Math.Min(raw.Length, start + maxScanBytes));
-
-            int i = start;
-            while (i < limit)
+            if (!name.StartsWith("CHUNK_", StringComparison.OrdinalIgnoreCase))
             {
-                if (raw[i] == 0x00)
-                {
-                    stringStart = start;
-                    stringEndExclusive = i;
-                    return i > start;
-                }
+                return false;
+            }
 
-                // Only allow reasonably printable ASCII in chunk name area
-                if (raw[i] < 32 || raw[i] > 126)
+            for (int i = 0; i < name.Length; i++)
+            {
+                char c = name[i];
+                if (!(char.IsLetterOrDigit(c) || c == '_'))
                 {
                     return false;
+                }
+            }
+
+            return name.Length <= 128;
+        }
+
+        private static int FindChunkEnd(byte[] raw, int start, int endLimit)
+        {
+            // Prefer SG_EOF inside [start..endLimit). Support both ASCII and UTF-16LE variants.
+            int ascii = FindAsciiInRange(raw, "SG_EOF", start, endLimit);
+            int utf16 = FindUtf16LeAsciiInRange(raw, "SG_EOF", start, endLimit);
+
+            int best;
+            if (ascii >= 0 && utf16 >= 0)
+            {
+                best = Math.Min(ascii, utf16);
+            }
+            else if (ascii >= 0)
+            {
+                best = ascii;
+            }
+            else
+            {
+                best = utf16;
+            }
+
+            if (best < 0)
+            {
+                return endLimit;
+            }
+
+            int end = best + ((best == ascii) ? 5 : 10); // ASCII len=5, UTF-16LE len=10
+
+            // Skip trailing 0x00 bytes after the marker, but do not cross endLimit
+            while (end < endLimit && end < raw.Length && raw[end] == 0x00)
+            {
+                end++;
+            }
+
+            return end;
+        }
+
+        private static int FindAsciiInRange(byte[] raw, string needle, int start, int end)
+        {
+            byte[] n = System.Text.Encoding.ASCII.GetBytes(needle);
+
+            int max = Math.Min(end, raw.Length) - n.Length;
+            for (int i = Math.Max(0, start); i <= max; i++)
+            {
+                bool ok = true;
+                for (int j = 0; j < n.Length; j++)
+                {
+                    if (raw[i + j] != n[j])
+                    {
+                        ok = false;
+                        break;
+                    }
+                }
+
+                if (ok)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        private static int FindUtf16LeAsciiInRange(byte[] raw, string needle, int start, int end)
+        {
+            // UTF-16LE encoding of ASCII letters: 'S' 00 'G' 00 ...
+            byte[] ascii = System.Text.Encoding.ASCII.GetBytes(needle);
+            byte[] n = new byte[ascii.Length * 2];
+
+            for (int i = 0; i < ascii.Length; i++)
+            {
+                n[(i * 2) + 0] = ascii[i];
+                n[(i * 2) + 1] = 0x00;
+            }
+
+            int max = Math.Min(end, raw.Length) - n.Length;
+            for (int i = Math.Max(0, start); i <= max; i++)
+            {
+                bool ok = true;
+                for (int j = 0; j < n.Length; j++)
+                {
+                    if (raw[i + j] != n[j])
+                    {
+                        ok = false;
+                        break;
+                    }
+                }
+
+                if (ok)
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        private static int GetChunkTokenLength(byte[] raw, int start, int end, int maxLen)
+        {
+            if (start < 0 || start >= raw.Length)
+            {
+                return 0;
+            }
+
+            int limit = Math.Min(raw.Length, Math.Min(end, start + maxLen));
+            int i = start;
+
+            while (i < limit)
+            {
+                byte b = raw[i];
+
+                bool isAscii = b >= 32 && b <= 126;
+                if (!isAscii)
+                {
+                    break;
+                }
+
+                char c = (char)b;
+                if (!(char.IsLetterOrDigit(c) || c == '_'))
+                {
+                    break;
                 }
 
                 i++;
             }
 
-            return false;
+            return i - start;
         }
 
+        private static bool TryReadLenPrefixedAscii(byte[] raw, int offset, int end, out string text, out int size)
+        {
+            text = "";
+            size = 0;
+
+            if (offset >= end)
+            {
+                return false;
+            }
+
+            int len = raw[offset];
+            if (len < 4 || len > 80)
+            {
+                return false;
+            }
+
+            if (offset + 1 + len > end)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < len; i++)
+            {
+                byte b = raw[offset + 1 + i];
+                if (b < 32 || b > 126)
+                {
+                    return false;
+                }
+            }
+
+            string s = System.Text.Encoding.ASCII.GetString(raw, offset + 1, len);
+
+            if (!IsValidAsciiRun(s))
+            {
+                return false;
+            }
+
+            text = s;
+            size = 1 + len;
+            return true;
+        }
+
+        private static bool TryReadLenPrefixedUtf16Le(byte[] raw, int offset, int end, out string text, out int size)
+        {
+            text = "";
+            size = 0;
+
+            if (offset >= end)
+            {
+                return false;
+            }
+
+            int charCount = raw[offset];
+            if (charCount < 4 || charCount > 120)
+            {
+                return false;
+            }
+
+            int byteCount = charCount * 2;
+            if (offset + 1 + byteCount > end)
+            {
+                return false;
+            }
+
+            // Expect printable ASCII stored as UTF-16LE (high byte is 0x00).
+            for (int i = 0; i < charCount; i++)
+            {
+                byte lo = raw[offset + 1 + (i * 2)];
+                byte hi = raw[offset + 1 + (i * 2) + 1];
+
+                if (hi != 0x00)
+                {
+                    return false;
+                }
+
+                if (lo < 32 || lo > 126)
+                {
+                    return false;
+                }
+            }
+
+            char[] chars = new char[charCount];
+            for (int i = 0; i < charCount; i++)
+            {
+                chars[i] = (char)raw[offset + 1 + (i * 2)];
+            }
+
+            string s = new string(chars);
+
+            if (!IsValidAsciiRun(s))
+            {
+                return false;
+            }
+
+            text = s;
+            size = 1 + byteCount;
+            return true;
+        }
+
+        private static bool TryReadAsciiZ(byte[] raw, int offset, int end, out string text, out int size)
+        {
+            text = "";
+            size = 0;
+
+            if (offset >= end)
+            {
+                return false;
+            }
+
+            if (raw[offset] < 32 || raw[offset] > 126)
+            {
+                return false;
+            }
+
+            int j = offset;
+            while (j < end && raw[j] >= 32 && raw[j] <= 126)
+            {
+                j++;
+            }
+
+            int len = j - offset;
+            if (len < 4)
+            {
+                return false;
+            }
+
+            if (j >= end || raw[j] != 0x00)
+            {
+                return false;
+            }
+
+            string s = System.Text.Encoding.ASCII.GetString(raw, offset, len);
+
+            if (!IsValidAsciiRun(s))
+            {
+                return false;
+            }
+
+            text = s;
+            size = len + 1;
+            return true;
+        }
+
+        private static uint ReadU32LE(byte[] raw, int offset)
+        {
+            return (uint)(raw[offset] | (raw[offset + 1] << 8) | (raw[offset + 2] << 16) | (raw[offset + 3] << 24));
+        }
+
+        private static string FormatDword(uint u32, int i32, float f32)
+        {
+            if (u32 == 0)
+            {
+                return "0 (false)";
+            }
+
+            if (u32 == 1)
+            {
+                return "1 (true)";
+            }
+
+            // Very common "1.0f" pattern in your dump: 0x3F800000
+            if (u32 == 0x3F800000)
+            {
+                return "1.0f (0x3F800000)";
+            }
+
+            // If it looks like a reasonable float, show float-first.
+            if (!float.IsNaN(f32) && !float.IsInfinity(f32))
+            {
+                float af = Math.Abs(f32);
+                if (af >= 0.000001f && af <= 1000000.0f)
+                {
+                    string fs = f32.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    return fs + "f | u32=0x" + u32.ToString("X8") + " (" + u32.ToString() + ") | i32=" + i32.ToString();
+                }
+            }
+
+            // Default: show both numeric interpretations.
+            return "u32=0x" + u32.ToString("X8") + " (" + u32.ToString() + ") | i32=" + i32.ToString();
+        }
     }
 }

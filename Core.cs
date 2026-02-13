@@ -5,11 +5,11 @@ namespace BFMESaveFileEditor
     public enum EntryType
     {
         StringAsciiZ,
+        StringAsciiLen8,
+        StringUtf16LeLen8,
         UInt32,
         Int32,
-        UInt16,
         Byte,
-        Float32,
         Unknown
     }
 
